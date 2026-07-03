@@ -33,8 +33,6 @@ final class HybridMonitor {
 
     func start() throws {
         appendLog("[EH] START monitor\n")
-        let trusted = AXIsProcessTrusted()
-        appendLog("[EH] AXIsProcessTrusted = \(trusted)\n")
 
         NotificationCenter.default.addObserver(forName: .suggestionAccepted, object: nil, queue: .main) { [weak self] _ in
             Task { @MainActor [weak self] in
@@ -50,9 +48,35 @@ final class HybridMonitor {
             }
         }
 
-        try createEventTap()
-        appendLog("[EH] START tap OK\n")
-        delegate?.monitorDidStart()
+        // CGEvent.tapCreate needs Input Monitoring permission.
+        // The permission dialog only appears for regular (non-accessory) apps in the foreground.
+        // Temporarily switch activation policy so macOS can show the dialog if needed.
+        let savedPolicy = NSApp.activationPolicy()
+        if savedPolicy == .accessory {
+            NSApp.setActivationPolicy(.regular)
+            NSApp.activate(ignoringOtherApps: true)
+        }
+
+        do {
+            try createEventTap()
+            appendLog("[EH] START tap OK\n")
+            delegate?.monitorDidStart()
+        } catch {
+            appendLog("[EH] START tap FAILED: \(error)\n")
+            if savedPolicy == .accessory {
+                // Revert to accessory immediately on failure
+                NSApp.setActivationPolicy(.accessory)
+            }
+            throw error
+        }
+
+        // Tap created — revert to accessory mode
+        if savedPolicy == .accessory {
+            // Small delay so the app registers properly before hiding
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) {
+                NSApp.setActivationPolicy(.accessory)
+            }
+        }
     }
 
     func stop() {
@@ -186,8 +210,9 @@ func appendLog(_ line: String) {
 }
 
 extension Notification.Name {
-    static let keystrokeInWeChat = Notification.Name("com.englishhelper.keystrokeInWeChat")
-    static let analysisTriggered = Notification.Name("com.englishhelper.analysisTriggered")
-    static let suggestionAccepted = Notification.Name("com.englishhelper.suggestionAccepted")
-    static let translateClipboard = Notification.Name("com.englishhelper.translateClipboard")
+    static let keystrokeInWeChat = Notification.Name("com.typemate.keystrokeInWeChat")
+    static let analysisTriggered = Notification.Name("com.typemate.analysisTriggered")
+    static let suggestionAccepted = Notification.Name("com.typemate.suggestionAccepted")
+    static let translateClipboard = Notification.Name("com.typemate.translateClipboard")
+    static let apiKeyUpdated = Notification.Name("com.typemate.apiKeyUpdated")
 }

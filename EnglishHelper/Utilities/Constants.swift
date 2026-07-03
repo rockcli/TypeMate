@@ -35,6 +35,6 @@ enum AppConstants {
     static let cacheTTLSeconds: TimeInterval = 3600  // 1 hour
 
     // Notification names
-    static let monitoringStatusChanged = Notification.Name("com.englishhelper.monitoringStatusChanged")
-    static let suggestionReady = Notification.Name("com.englishhelper.suggestionReady")
+    static let monitoringStatusChanged = Notification.Name("com.typemate.monitoringStatusChanged")
+    static let suggestionReady = Notification.Name("com.typemate.suggestionReady")
 }

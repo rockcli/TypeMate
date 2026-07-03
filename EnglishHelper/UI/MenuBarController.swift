@@ -115,6 +115,6 @@ final class MenuBarController: NSObject, NSMenuDelegate {
 
 // MARK: - Notification Names
 extension Notification.Name {
-    static let startMonitoring = Notification.Name("com.englishhelper.startMonitoring")
-    static let stopMonitoring = Notification.Name("com.englishhelper.stopMonitoring")
+    static let startMonitoring = Notification.Name("com.typemate.startMonitoring")
+    static let stopMonitoring = Notification.Name("com.typemate.stopMonitoring")
 }

@@ -129,6 +129,7 @@ struct SettingsView: View {
         guard !apiKey.isEmpty else { return }
         try? ConfigurationManager.saveAPIKey(apiKey)
         showKeySaved = true
+        NotificationCenter.default.post(name: .apiKeyUpdated, object: nil)
         DispatchQueue.main.asyncAfter(deadline: .now() + 2) {
             showKeySaved = false
         }

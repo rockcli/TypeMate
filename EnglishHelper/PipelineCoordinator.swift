@@ -20,6 +20,14 @@ final class PipelineCoordinator: @unchecked Sendable, ObservableObject {
         setupLLMService()
         monitor.delegate = self
         sharedCoordinator = self
+
+        // Re-initialize LLM service when API key is saved from Settings
+        NotificationCenter.default.addObserver(forName: .apiKeyUpdated, object: nil, queue: .main) { [weak self] _ in
+            Task { @MainActor [weak self] in
+                self?.setupLLMService()
+            }
+        }
+
         await autoStartIfPossible()
     }
 

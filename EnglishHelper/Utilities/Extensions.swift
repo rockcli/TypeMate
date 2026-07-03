@@ -32,6 +32,6 @@ extension String {
 // MARK: - Process
 extension ProcessInfo {
     static var isDebugMode: Bool {
-        ProcessInfo.processInfo.environment["ENGLISHHELPER_DEBUG"] == "1"
+        ProcessInfo.processInfo.environment["TYPEMATE_DEBUG"] == "1"
     }
 }

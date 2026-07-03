@@ -29,7 +29,7 @@ enum ConfigurationManager {
         // 2. Check Keychain
         let query: [String: Any] = [
             kSecClass as String: kSecClassGenericPassword,
-            kSecAttrService as String: "com.englishhelper",
+            kSecAttrService as String: "com.typemate",
             kSecAttrAccount as String: "deepseek-api-key",
             kSecReturnData as String: true,
             kSecMatchLimit as String: kSecMatchLimitOne,
@@ -56,7 +56,7 @@ enum ConfigurationManager {
         // Delete existing
         let deleteQuery: [String: Any] = [
             kSecClass as String: kSecClassGenericPassword,
-            kSecAttrService as String: "com.englishhelper",
+            kSecAttrService as String: "com.typemate",
             kSecAttrAccount as String: "deepseek-api-key",
         ]
         SecItemDelete(deleteQuery as CFDictionary)
@@ -64,7 +64,7 @@ enum ConfigurationManager {
         // Add new
         let addQuery: [String: Any] = [
             kSecClass as String: kSecClassGenericPassword,
-            kSecAttrService as String: "com.englishhelper",
+            kSecAttrService as String: "com.typemate",
             kSecAttrAccount as String: "deepseek-api-key",
             kSecValueData as String: data,
             kSecAttrAccessible as String: kSecAttrAccessibleWhenUnlockedThisDeviceOnly,
