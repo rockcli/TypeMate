@@ -1,7 +1,6 @@
 import Foundation
 
-/// DeepSeek API client using Anthropic-compatible Messages endpoint
-/// Fixes Codex C-4 (URL path) and adds retry with exponential backoff
+/// DeepSeek API client using the Anthropic-compatible Messages endpoint
 final class LLMService: @unchecked Sendable {
     private let session: URLSession
     private let baseURL: String
@@ -17,7 +16,7 @@ final class LLMService: @unchecked Sendable {
         let config = URLSessionConfiguration.default
         config.timeoutIntervalForRequest = AppConstants.apiTimeout
         config.timeoutIntervalForResource = AppConstants.apiTimeout
-        config.waitsForConnectivity = true  // Fixes Codex V2-M3-adjacent: handles network flakiness
+        config.waitsForConnectivity = true
         self.session = URLSession(configuration: config)
     }
 
@@ -39,18 +38,14 @@ final class LLMService: @unchecked Sendable {
             systemPrompt = PromptTemplates.improvementSystem
             userMessage = text
         case .skip:
-            throw EnglishHelperError.bufferTooShort
+            throw TypeMateError.bufferTooShort
         }
 
-        // Fixes Codex C-4: Correct URL construction
-        // baseURL is https://api.deepseek.com/anthropic
-        // Messages API path is /v1/messages
-        let urlString = "\(baseURL)/v1/messages"
+        let urlString = "\(baseURL)\(AppConstants.deepSeekMessagesPath)"
         guard let url = URL(string: urlString) else {
-            throw EnglishHelperError.invalidResponse("Invalid URL: \(urlString)")
+            throw TypeMateError.invalidResponse("Invalid URL: \(urlString)")
         }
 
-        // Build Anthropic Messages API request
         let body: [String: Any] = [
             "model": model,
             "max_tokens": 300,
@@ -58,7 +53,7 @@ final class LLMService: @unchecked Sendable {
             "messages": [
                 ["role": "user", "content": userMessage]
             ],
-            "thinking": ["type": "disabled"]  // Disable reasoning for faster translation
+            "thinking": ["type": "disabled"]
         ]
 
         var request = URLRequest(url: url)
@@ -68,7 +63,6 @@ final class LLMService: @unchecked Sendable {
         request.setValue("2023-06-01", forHTTPHeaderField: "anthropic-version")
         request.httpBody = try JSONSerialization.data(withJSONObject: body)
 
-        // Retry with exponential backoff
         let maxRetries = 3
         var lastError: Error?
 
@@ -77,7 +71,7 @@ final class LLMService: @unchecked Sendable {
                 let (data, response) = try await session.data(for: request)
 
                 guard let httpResponse = response as? HTTPURLResponse else {
-                    throw EnglishHelperError.networkError("Invalid response type")
+                    throw TypeMateError.networkError("Invalid response type")
                 }
 
                 switch httpResponse.statusCode {
@@ -87,36 +81,34 @@ final class LLMService: @unchecked Sendable {
                     return result
                 case 429:
                     consecutiveErrors += 1
-                    throw EnglishHelperError.rateLimited
+                    throw TypeMateError.rateLimited
                 case 401, 403:
-                    throw EnglishHelperError.noAPIKey
+                    throw TypeMateError.noAPIKey
                 case 500...599:
                     consecutiveErrors += 1
-                    throw EnglishHelperError.networkError("Server error \(httpResponse.statusCode)")
+                    throw TypeMateError.networkError("Server error \(httpResponse.statusCode)")
                 default:
                     let body = String(data: data, encoding: .utf8) ?? ""
-                    throw EnglishHelperError.invalidResponse("HTTP \(httpResponse.statusCode): \(body.prefix(200))")
+                    throw TypeMateError.invalidResponse("HTTP \(httpResponse.statusCode): \(body.prefix(200))")
                 }
-            } catch let error as EnglishHelperError {
+            } catch let error as TypeMateError {
                 lastError = error
             } catch {
-                lastError = EnglishHelperError.networkError(error.localizedDescription)
+                lastError = TypeMateError.networkError(error.localizedDescription)
             }
 
-            // Exponential backoff: 1s, 2s, 4s
             if attempt < maxRetries - 1 {
                 try? await Task.sleep(nanoseconds: UInt64(pow(2.0, Double(attempt))) * 1_000_000_000)
             }
         }
 
-        throw lastError ?? EnglishHelperError.timeout
+        throw lastError ?? TypeMateError.timeout
     }
 
     private func parseResponse(_ data: Data, mode: AnalysisMode, startTime: Date) throws -> SuggestionResponse {
         guard let json = try JSONSerialization.jsonObject(with: data) as? [String: Any],
               let content = json["content"] as? [[String: Any]] else {
-            // Try Anthropic format: content array with text blocks
-            throw EnglishHelperError.decodingError
+            throw TypeMateError.decodingError
         }
 
         var fullText = ""
@@ -128,11 +120,9 @@ final class LLMService: @unchecked Sendable {
         }
 
         guard !fullText.isEmpty else {
-            throw EnglishHelperError.invalidResponse("Empty response content")
+            throw TypeMateError.invalidResponse("Empty response content")
         }
 
-        // Parse suggestions from response
-        // Format expected: each suggestion on a new line, or numbered
         let lines = fullText
             .components(separatedBy: "\n")
             .map { $0.trimmingCharacters(in: .whitespaces) }
@@ -177,5 +167,4 @@ enum PromptTemplates {
     Return ONLY the Chinese translation — no explanations, no notes.
     Keep the tone casual and friendly, appropriate for chatting with friends.
     """
-
 }

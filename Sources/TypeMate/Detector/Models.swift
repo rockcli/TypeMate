@@ -21,15 +21,39 @@ struct AppSettings: Codable, Sendable, Equatable {
     var enableTranslation: Bool = true
     var enableImprovement: Bool = true
     var debounceMilliseconds: Int = 300
-    var autoDismissDelay: TimeInterval = 5.0
-    var apiTimeoutSeconds: TimeInterval = 10.0
+    var autoDismissDelay: TimeInterval = AppConstants.panelAutoDismissSeconds
+    var apiTimeoutSeconds: TimeInterval = AppConstants.apiTimeout
     var fontSize: Double = 14
-    var maxCacheSize: Int = 100
-    var cacheTTLSeconds: TimeInterval = 3600
+    var maxCacheSize: Int = AppConstants.cacheMaxEntries
+    var cacheTTLSeconds: TimeInterval = AppConstants.cacheTTLSeconds
     var baseURL: String = AppConstants.deepSeekBaseURL
     var modelName: String = AppConstants.deepSeekModel
 
     static let `default` = AppSettings()
+
+    init() {}
+
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        enableTranslation = try c.decodeIfPresent(Bool.self, forKey: .enableTranslation) ?? true
+        enableImprovement = try c.decodeIfPresent(Bool.self, forKey: .enableImprovement) ?? true
+        debounceMilliseconds = try c.decodeIfPresent(Int.self, forKey: .debounceMilliseconds) ?? 300
+        autoDismissDelay = try c.decodeIfPresent(TimeInterval.self, forKey: .autoDismissDelay) ?? AppConstants.panelAutoDismissSeconds
+        apiTimeoutSeconds = try c.decodeIfPresent(TimeInterval.self, forKey: .apiTimeoutSeconds) ?? AppConstants.apiTimeout
+        fontSize = try c.decodeIfPresent(Double.self, forKey: .fontSize) ?? 14
+        maxCacheSize = try c.decodeIfPresent(Int.self, forKey: .maxCacheSize) ?? AppConstants.cacheMaxEntries
+        cacheTTLSeconds = try c.decodeIfPresent(TimeInterval.self, forKey: .cacheTTLSeconds) ?? AppConstants.cacheTTLSeconds
+
+        let decodedBaseURL = try c.decodeIfPresent(String.self, forKey: .baseURL)?.trimmingCharacters(in: .whitespacesAndNewlines)
+        baseURL = (decodedBaseURL?.isEmpty == false) ? decodedBaseURL! : AppConstants.deepSeekBaseURL
+
+        let decodedModel = try c.decodeIfPresent(String.self, forKey: .modelName)?.trimmingCharacters(in: .whitespacesAndNewlines)
+        if let decodedModel, !decodedModel.isEmpty {
+            modelName = decodedModel == "deepseek-v4-flash" ? AppConstants.deepSeekModel : decodedModel
+        } else {
+            modelName = AppConstants.deepSeekModel
+        }
+    }
 }
 
 // MARK: - Runtime State
@@ -40,7 +64,7 @@ final class AppState: ObservableObject {
     @Published var suggestionState: SuggestionState = .idle
     @Published var currentSuggestion: SuggestionResponse?
     @Published var isPanelVisible = false
-    @Published var lastError: EnglishHelperError?
+    @Published var lastError: TypeMateError?
     @Published var inputBuffer: String = ""
     @Published var weChatIsFrontmost = false
 
@@ -60,7 +84,7 @@ enum MonitoringStatus: String, Sendable {
     case notMonitoring
     case monitoring
     case unavailable   // WeChat not running
-    case noPermission  // Accessibility not granted
+    case noPermission  // Input Monitoring not granted
 }
 
 enum SuggestionState: Sendable, Equatable {
@@ -69,12 +93,12 @@ enum SuggestionState: Sendable, Equatable {
     case analyzing
     case fetching
     case showing(SuggestionResponse)
-    case error(EnglishHelperError)
+    case error(TypeMateError)
 }
 
 // MARK: - Error Types
 
-enum EnglishHelperError: LocalizedError, Sendable, Equatable {
+enum TypeMateError: LocalizedError, Sendable, Equatable {
     case noAPIKey
     case networkError(String)
     case decodingError
@@ -94,7 +118,7 @@ enum EnglishHelperError: LocalizedError, Sendable, Equatable {
         case .timeout: return "Request timed out."
         case .invalidResponse(let msg): return "Invalid response: \(msg)"
         case .weChatNotRunning: return "WeChat is not running."
-        case .noPermission: return "Accessibility permission required."
+        case .noPermission: return "Input Monitoring permission required."
         case .bufferTooShort: return "Not enough text to analyze."
         }
     }

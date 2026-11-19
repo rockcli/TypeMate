@@ -2,7 +2,6 @@ import AppKit
 import SwiftUI
 
 /// Floating NSPanel for displaying suggestions
-/// Fixes: no flicker (updates existing panel), longer timeout, extends on hover
 @MainActor
 final class SuggestionPanelController: NSObject {
     private var panel: NSPanel?
@@ -11,17 +10,18 @@ final class SuggestionPanelController: NSObject {
     private var dismissWorkItem: DispatchWorkItem?
     private var trackingArea: NSTrackingArea?
     private var isHovering = false
+    private var currentAutoDismissDelay: TimeInterval = AppConstants.panelAutoDismissSeconds
 
     func show(suggestion: SuggestionResponse, appState: AppState) {
-        // Cancel pending dismiss
         dismissWorkItem?.cancel()
-
-        // Always recreate panel to avoid stale state
-        // (rootView assignment on existing NSHostingView is unreliable in newer SwiftUI)
         dismiss()
+
+        let dismissDelay = max(appState.settings.autoDismissDelay, 2.0)
+        currentAutoDismissDelay = dismissDelay
 
         let contentView = SuggestionView(
             suggestion: suggestion,
+            autoDismissSeconds: Int(dismissDelay),
             onAccept: { [weak self] index in
                 self?.onAccept(index: index, suggestion: suggestion, appState: appState)
             },
@@ -31,7 +31,6 @@ final class SuggestionPanelController: NSObject {
         )
         let hosting = NSHostingView(rootView: contentView)
 
-        // Let SwiftUI layout first, then measure ideal size
         hosting.layout()
         let idealSize = hosting.fittingSize
         let height = min(max(idealSize.height, 120), 350)
@@ -56,22 +55,16 @@ final class SuggestionPanelController: NSObject {
         hostingView = hosting
         self.panel = panel
 
-        // Mouse tracking: pause auto-dismiss while hovering
         setupHoverTracking(panel)
-
-        // Position and animate
         positionPanel(panel)
         panel.orderFrontRegardless()
-
-        // Global event monitor for keyboard shortcuts
         setupGlobalMonitor(suggestion: suggestion, appState: appState)
-
-        // Auto-dismiss after 10 seconds (paused while hovering)
         scheduleAutoDismiss()
     }
 
     private func scheduleAutoDismiss() {
         dismissWorkItem?.cancel()
+        let delay = currentAutoDismissDelay
         let work = DispatchWorkItem { [weak self] in
             guard let self else { return }
             guard !self.isHovering else {
@@ -81,7 +74,7 @@ final class SuggestionPanelController: NSObject {
             self.dismiss()
         }
         dismissWorkItem = work
-        DispatchQueue.main.asyncAfter(deadline: .now() + 10, execute: work)
+        DispatchQueue.main.asyncAfter(deadline: .now() + delay, execute: work)
     }
 
     private func setupHoverTracking(_ panel: NSPanel) {
@@ -98,13 +91,11 @@ final class SuggestionPanelController: NSObject {
 
     @objc func mouseEntered(_ event: NSEvent) {
         isHovering = true
-        // Cancel auto-dismiss while hovering
         dismissWorkItem?.cancel()
     }
 
     @objc func mouseExited(_ event: NSEvent) {
         isHovering = false
-        // Restart auto-dismiss countdown
         scheduleAutoDismiss()
     }
 
@@ -113,32 +104,31 @@ final class SuggestionPanelController: NSObject {
         panel?.close()
         panel = nil
         hostingView = nil
-        if let m = globalEventMonitor { NSEvent.removeMonitor(m); globalEventMonitor = nil }
+        if let m = globalEventMonitor {
+            NSEvent.removeMonitor(m)
+            globalEventMonitor = nil
+        }
     }
 
     // MARK: - Positioning
 
     private func positionPanel(_ panel: NSPanel) {
-        // Try to position near WeChat window
         if let wechatFrame = getWeChatWindowFrame(),
            let screen = screenContaining(wechatFrame) ?? NSScreen.main {
             let vis = screen.visibleFrame
             let pw = panel.frame.width
             let ph = panel.frame.height
 
-            // Prefer right side, flip to left if not enough space
             let rightSpace = vis.maxX - wechatFrame.maxX
             let x: CGFloat = rightSpace >= pw + 8
-                ? wechatFrame.maxX                    // Right side, flush left-to-right
-                : wechatFrame.minX - pw               // Left side, flush right-to-left
+                ? wechatFrame.maxX
+                : wechatFrame.minX - pw
 
             let y = min(max(wechatFrame.midY - ph / 2, vis.minY + 8), vis.maxY - ph - 8)
-
             panel.setFrameOrigin(NSPoint(x: x, y: y))
             return
         }
 
-        // Fallback: center on main screen
         if let screen = NSScreen.main {
             let frame = screen.visibleFrame
             let x = frame.midX - panel.frame.width / 2
@@ -149,14 +139,6 @@ final class SuggestionPanelController: NSObject {
 
     private func screenContaining(_ rect: NSRect) -> NSScreen? {
         NSScreen.screens.first { $0.frame.intersects(rect) }
-    }
-
-    private func clampToScreen(_ rect: NSRect, screen: NSScreen) -> NSRect {
-        let vis = screen.visibleFrame
-        var r = rect
-        r.origin.x = max(vis.minX + 8, min(r.origin.x, vis.maxX - r.width - 8))
-        r.origin.y = max(vis.minY + 8, min(r.origin.y, vis.maxY - r.height - 8))
-        return r
     }
 
     private func getWeChatWindowFrame() -> NSRect? {
@@ -174,17 +156,25 @@ final class SuggestionPanelController: NSObject {
     // MARK: - Global Event Monitor
 
     private func setupGlobalMonitor(suggestion: SuggestionResponse, appState: AppState) {
-        if globalEventMonitor != nil { NSEvent.removeMonitor(globalEventMonitor!) }
+        if let existing = globalEventMonitor {
+            NSEvent.removeMonitor(existing)
+        }
         globalEventMonitor = NSEvent.addGlobalMonitorForEvents(matching: .keyDown) { [weak self] event in
-            guard self?.panel != nil else { return }
-            // Use Option+1/2/3 to avoid conflict with WeChat's Cmd+1-9 tab switching
-            if event.modifierFlags.contains(.option) && !event.modifierFlags.contains(.command) {
-                let keyMap: [UInt16: Int] = [18: 0, 19: 1, 20: 2]
-                if let index = keyMap[event.keyCode] {
-                    self?.onAccept(index: index, suggestion: suggestion, appState: appState)
+            let flags = event.modifierFlags
+            let keyCode = event.keyCode
+            Task { @MainActor [weak self] in
+                guard let self, self.panel != nil else { return }
+                // Use Option+1/2/3 to avoid conflict with WeChat's Cmd+1-9 tab switching
+                if flags.contains(.option) && !flags.contains(.command) {
+                    let keyMap: [UInt16: Int] = [18: 0, 19: 1, 20: 2]
+                    if let index = keyMap[keyCode] {
+                        self.onAccept(index: index, suggestion: suggestion, appState: appState)
+                    }
+                }
+                if keyCode == 53 {
+                    self.dismiss()
                 }
             }
-            if event.keyCode == 53 { self?.dismiss() }
         }
     }
 
@@ -198,7 +188,7 @@ final class SuggestionPanelController: NSObject {
         guard let pid = NSWorkspace.shared.runningApplications
             .first(where: { $0.bundleIdentifier == AppConstants.weChatBundleID })?.processIdentifier else { return }
 
-        if TextReplacer.replaceViaAX(pid: pid, newText: text) {} else {
+        if !TextReplacer.replaceViaAX(pid: pid, newText: text) {
             TextReplacer.replaceViaClipboard(newText: text)
         }
         NotificationCenter.default.post(name: .suggestionAccepted, object: nil)

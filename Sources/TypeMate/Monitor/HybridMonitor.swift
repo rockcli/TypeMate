@@ -7,7 +7,7 @@ protocol HybridMonitorDelegate: AnyObject, Sendable {
     func monitorDidStop()
     func monitorDidDetectText(_ text: String)
     func monitorShouldAnalyze(_ text: String) async
-    func monitorDidEncounterError(_ error: EnglishHelperError)
+    func monitorDidEncounterError(_ error: TypeMateError)
 }
 
 @MainActor
@@ -32,14 +32,14 @@ final class HybridMonitor {
     }
 
     func start() throws {
-        appendLog("[EH] START monitor\n")
+        appendLog("[TypeMate] START monitor\n")
 
         NotificationCenter.default.addObserver(forName: .suggestionAccepted, object: nil, queue: .main) { [weak self] _ in
             Task { @MainActor [weak self] in
                 self?.inputBuffer = ""
                 self?.lastAwayClear = false
             }
-            appendLog("[EH] BUF CLEAR: suggestion accepted\n")
+            appendLog("[TypeMate] BUF CLEAR: suggestion accepted\n")
         }
 
         NotificationCenter.default.addObserver(forName: .translateClipboard, object: nil, queue: .main) { [weak self] _ in
@@ -49,7 +49,6 @@ final class HybridMonitor {
         }
 
         // CGEvent.tapCreate needs Input Monitoring permission.
-        // The permission dialog only appears for regular (non-accessory) apps in the foreground.
         // Temporarily switch activation policy so macOS can show the dialog if needed.
         let savedPolicy = NSApp.activationPolicy()
         if savedPolicy == .accessory {
@@ -59,20 +58,17 @@ final class HybridMonitor {
 
         do {
             try createEventTap()
-            appendLog("[EH] START tap OK\n")
+            appendLog("[TypeMate] START tap OK\n")
             delegate?.monitorDidStart()
         } catch {
-            appendLog("[EH] START tap FAILED: \(error)\n")
+            appendLog("[TypeMate] START tap FAILED: \(error)\n")
             if savedPolicy == .accessory {
-                // Revert to accessory immediately on failure
                 NSApp.setActivationPolicy(.accessory)
             }
             throw error
         }
 
-        // Tap created — revert to accessory mode
         if savedPolicy == .accessory {
-            // Small delay so the app registers properly before hiding
             DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) {
                 NSApp.setActivationPolicy(.accessory)
             }
@@ -90,21 +86,30 @@ final class HybridMonitor {
     private func createEventTap() throws {
         let mask = CGEventMask(1 << CGEventType.keyDown.rawValue)
         let ctx = Unmanaged.passUnretained(self).toOpaque()
-        guard let tap = CGEvent.tapCreate(tap: .cgSessionEventTap, place: .headInsertEventTap, options: .listenOnly,
-                eventsOfInterest: mask,
-                callback: { _, type, event, refcon in
-                    guard type == .keyDown else { return Unmanaged.passUnretained(event) }
-                    let kc = event.getIntegerValueField(.keyboardEventKeycode)
-                    let fl = event.flags.rawValue
-                    var cs = [UniChar](repeating: 0, count: 32); var n = 0
-                    event.keyboardGetUnicodeString(maxStringLength: 32, actualStringLength: &n, unicodeString: &cs)
-                    let ch = n > 0 ? String(utf16CodeUnits: cs, count: n) : ""
-                    let m = Unmanaged<HybridMonitor>.fromOpaque(refcon!).takeUnretainedValue()
-                    m.handleRaw(kc: kc, fl: fl, ch: ch)
-                    return Unmanaged.passUnretained(event)
-                }, userInfo: ctx) else { throw EnglishHelperError.noPermission }
+        guard let tap = CGEvent.tapCreate(
+            tap: .cgSessionEventTap,
+            place: .headInsertEventTap,
+            options: .listenOnly,
+            eventsOfInterest: mask,
+            callback: { _, type, event, refcon in
+                guard type == .keyDown else { return Unmanaged.passUnretained(event) }
+                let kc = event.getIntegerValueField(.keyboardEventKeycode)
+                let fl = event.flags.rawValue
+                var cs = [UniChar](repeating: 0, count: 32)
+                var n = 0
+                event.keyboardGetUnicodeString(maxStringLength: 32, actualStringLength: &n, unicodeString: &cs)
+                let ch = n > 0 ? String(utf16CodeUnits: cs, count: n) : ""
+                let m = Unmanaged<HybridMonitor>.fromOpaque(refcon!).takeUnretainedValue()
+                m.handleRaw(kc: kc, fl: fl, ch: ch)
+                return Unmanaged.passUnretained(event)
+            },
+            userInfo: ctx
+        ) else { throw TypeMateError.noPermission }
+
         eventTap = tap
-        guard let s = CFMachPortCreateRunLoopSource(kCFAllocatorDefault, tap, 0) else { throw EnglishHelperError.noPermission }
+        guard let s = CFMachPortCreateRunLoopSource(kCFAllocatorDefault, tap, 0) else {
+            throw TypeMateError.noPermission
+        }
         tapSource = s
         CFRunLoopAddSource(CFRunLoopGetMain(), s, .commonModes)
     }
@@ -116,15 +121,14 @@ final class HybridMonitor {
             let frontBundle = frontApp?.bundleIdentifier ?? "?"
             let isWeChat = frontBundle == AppConstants.weChatBundleID
 
-            // ── Hotkey: double Cmd+C — translate selected text ──
+            // Hotkey: double Cmd+C — translate selected text
             if flags.contains(.maskCommand) && !flags.contains(.maskShift) && !flags.contains(.maskAlternate) && kc == 8 {
                 let now = Date()
                 let gap = now.timeIntervalSince(self.lastCmdCTime)
                 self.lastCmdCTime = now
                 if gap < 0.5 && gap > 0.05 {
-                    // Prevent triple-tap from triggering twice
                     self.lastCmdCTime = Date.distantPast
-                    appendLog("[EH] HOTKEY double Cmd+C gap=\(String(format: "%.2f", gap))s\n")
+                    appendLog("[TypeMate] HOTKEY double Cmd+C gap=\(String(format: "%.2f", gap))s\n")
                     DispatchQueue.main.asyncAfter(deadline: .now() + 0.2) {
                         self.translateFromClipboard()
                     }
@@ -132,12 +136,12 @@ final class HybridMonitor {
                 return
             }
 
-            // ── In WeChat ──
+            // In WeChat
             guard isWeChat else {
                 let away = Date().timeIntervalSince(self.lastWeChatKeystroke)
                 if away > 8.0 && !self.inputBuffer.isEmpty {
                     if !self.lastAwayClear {
-                        appendLog("[EH] BUF CLEAR: away=\(String(format: "%.0f", away))s\n")
+                        appendLog("[TypeMate] BUF CLEAR: away=\(String(format: "%.0f", away))s\n")
                         self.lastAwayClear = true
                     }
                     self.inputBuffer = ""
@@ -147,10 +151,10 @@ final class HybridMonitor {
             self.lastAwayClear = false
             self.lastWeChatKeystroke = Date()
 
-            // ── Chinese IME active: skip auto-capture, wait for manual hotkey ──
+            // Skip auto-capture while Chinese IME is active
             guard !self.isChineseInputSource() else { return }
 
-            // ── English mode: accumulate and debounce ──
+            // English mode: accumulate and debounce
             switch kc {
             case 51: if !self.inputBuffer.isEmpty { self.inputBuffer.removeLast() }
             case 36: if flags.contains(.maskShift) { self.inputBuffer += "\n" } else { self.inputBuffer = "" }
@@ -167,11 +171,14 @@ final class HybridMonitor {
             self.delegate?.monitorDidDetectText(buf)
             NotificationCenter.default.post(name: .keystrokeInWeChat, object: buf)
 
+            let debounceMs = sharedCoordinator?.appState.settings.debounceMilliseconds ?? 300
+            let delayNs = UInt64(max(debounceMs, 50)) * 1_000_000
+
             Task {
-                await self.debounce.schedule(delayNanoseconds: AppConstants.debounceMilliseconds) {
+                await self.debounce.schedule(delayNanoseconds: delayNs) {
                     let t = buf.trimmingCharacters(in: .whitespacesAndNewlines)
                     guard !t.isEmpty, t.count >= AppConstants.minTextLength else { return }
-                    appendLog("[EH] ANALYZE -> triggerAnalysis(\(t))\n")
+                    appendLog("[TypeMate] ANALYZE -> \(t)\n")
                     triggerAnalysis(t)
                 }
             }
@@ -181,21 +188,21 @@ final class HybridMonitor {
     /// Translate text from clipboard (after double Cmd+C)
     private func translateFromClipboard() {
         let text = NSPasteboard.general.string(forType: .string) ?? ""
-        appendLog("[EH] CLIPBOARD: \(text.prefix(60))\n")
+        appendLog("[TypeMate] CLIPBOARD: \(text.prefix(60))\n")
 
         let t = text.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !t.isEmpty, t.count >= AppConstants.minTextLength else {
-            appendLog("[EH] CLIPBOARD skip: empty or too short\n")
+            appendLog("[TypeMate] CLIPBOARD skip: empty or too short\n")
             return
         }
 
         let mode = AnalysisEngine.analyzeForTranslate(t)
         guard mode != .skip else {
-            appendLog("[EH] CLIPBOARD skip: too short\n")
+            appendLog("[TypeMate] CLIPBOARD skip: too short\n")
             return
         }
 
-        appendLog("[EH] CLIPBOARD translate: \(t.prefix(40)) mode=\(mode)\n")
+        appendLog("[TypeMate] CLIPBOARD translate: \(t.prefix(40)) mode=\(mode)\n")
         Task {
             await sharedCoordinator?.processText(t, mode: mode)
         }
@@ -203,10 +210,15 @@ final class HybridMonitor {
 }
 
 func appendLog(_ line: String) {
-    guard ProcessInfo.processInfo.environment["EH_DEBUG"] == "1" else { return }
-    let u = URL(fileURLWithPath: "/tmp/eh.log")
-    if let f = try? FileHandle(forWritingTo: u) { f.seekToEndOfFile(); f.write(line.data(using: .utf8)!); try? f.close() }
-    else { try? line.data(using: .utf8)?.write(to: u) }
+    guard ProcessInfo.isDebugMode else { return }
+    let u = URL(fileURLWithPath: "/tmp/typemate.log")
+    if let f = try? FileHandle(forWritingTo: u) {
+        f.seekToEndOfFile()
+        if let data = line.data(using: .utf8) { f.write(data) }
+        try? f.close()
+    } else {
+        try? line.data(using: .utf8)?.write(to: u)
+    }
 }
 
 extension Notification.Name {
@@ -215,4 +227,5 @@ extension Notification.Name {
     static let suggestionAccepted = Notification.Name("com.typemate.suggestionAccepted")
     static let translateClipboard = Notification.Name("com.typemate.translateClipboard")
     static let apiKeyUpdated = Notification.Name("com.typemate.apiKeyUpdated")
+    static let settingsUpdated = Notification.Name("com.typemate.settingsUpdated")
 }

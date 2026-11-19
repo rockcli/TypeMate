@@ -1,14 +1,12 @@
 import Foundation
 
-/// Thread-safe suggestion cache using actor-wrapped NSCache
-/// Fixes Codex N-1 (NSCache sendability) — wrapped in actor for safety
+/// Thread-safe suggestion cache using an actor-wrapped NSCache
 actor SuggestionCache {
     private let cache = NSCache<NSString, CacheEntry>()
     private var ttl: TimeInterval
 
     init(maxCount: Int = AppConstants.cacheMaxEntries, ttl: TimeInterval = AppConstants.cacheTTLSeconds) {
         cache.countLimit = maxCount
-        // Fixes Codex minor: add totalCostLimit
         cache.totalCostLimit = 5_000_000  // ~5MB
         self.ttl = ttl
     }

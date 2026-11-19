@@ -3,6 +3,7 @@ import SwiftUI
 /// Floating suggestion panel view
 struct SuggestionView: View {
     let suggestion: SuggestionResponse
+    let autoDismissSeconds: Int
     let onAccept: (Int) -> Void
     let onDismiss: () -> Void
 
@@ -15,13 +16,11 @@ struct SuggestionView: View {
                 ModeBadge(mode: suggestion.mode)
                 Spacer()
                 HStack(spacing: 8) {
-                    // Latency indicator
                     if suggestion.latency > 0 {
                         Text(String(format: "%.1fs", suggestion.latency))
                             .font(.system(size: 9, design: .monospaced))
                             .foregroundColor(.secondary)
                     }
-                    // Source badge
                     if suggestion.source == .cache {
                         Text("cached")
                             .font(.system(size: 9))
@@ -31,7 +30,6 @@ struct SuggestionView: View {
                             .background(Color.secondary.opacity(0.15))
                             .cornerRadius(3)
                     }
-                    // Close button
                     Button(action: onDismiss) {
                         Image(systemName: "xmark.circle.fill")
                             .foregroundColor(.secondary)
@@ -76,7 +74,7 @@ struct SuggestionView: View {
 
             // Hint
             HStack {
-                Text("⌥1-3 accept · Esc dismiss · auto-dismiss in 10s")
+                Text("⌥1-3 accept · Esc dismiss · auto-dismiss in \(autoDismissSeconds)s")
                     .font(.system(size: 9))
                     .foregroundColor(.secondary.opacity(0.6))
                 Spacer()
@@ -175,7 +173,7 @@ struct SuggestionRow: View {
     }
 }
 
-// MARK: - Visual Effect (NSVisualEffectView wrapper)
+// MARK: - Visual Effect
 struct VisualEffectView: NSViewRepresentable {
     let material: NSVisualEffectView.Material
     let blendingMode: NSVisualEffectView.BlendingMode

@@ -2,21 +2,25 @@ import AppKit
 import SwiftUI
 
 @main
-struct EnglishHelperApp: App {
+struct TypeMateApp: App {
     @NSApplicationDelegateAdaptor(AppDelegate.self) var appDelegate
 
     var body: some Scene {
-        MenuBarExtra("📝", systemImage: "pencil.and.outline") {
+        MenuBarExtra("TypeMate", systemImage: "pencil.and.outline") {
             VStack(alignment: .leading, spacing: 6) {
                 Text("TypeMate")
-                    .font(.system(size: 10, weight: .bold))
-                Text("Real-time English writing assistant · Powered by Rock")
-                    .font(.system(size: 9))
+                    .font(.system(size: 11, weight: .bold))
+                Text("Real-time English writing assistant")
+                    .font(.system(size: 10))
                     .foregroundColor(.secondary)
                 Divider()
                 Button("Translate Selection  ⌘C×2") {
                     NotificationCenter.default.post(name: .translateClipboard, object: nil)
                 }
+                Button("Settings...") {
+                    appDelegate.coordinator?.openSettings()
+                }
+                .keyboardShortcut(",")
                 Divider()
                 Button("Quit") {
                     NSApp.terminate(nil)

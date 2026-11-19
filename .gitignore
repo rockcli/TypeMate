@@ -1,5 +1,6 @@
 .build/
 .build-*/
+build/
 *.xcodeproj/
 *.xcworkspace/
 DerivedData/
@@ -8,11 +9,6 @@ Packages/
 .DS_Store
 *.swp
 *.swo
-/tmp/
-eh.log
-reviews.db
 *.swiftmodule
-validate_ax.swift
-Tools/
-.full-stack-feature/
-scripts/
+/tmp/
+typemate.log
